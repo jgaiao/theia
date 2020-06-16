@@ -21,7 +21,6 @@ import * as fs from 'fs-extra';
 import { v4 } from 'uuid';
 import * as os from 'os';
 import * as touch from 'touch';
-import * as drivelist from 'drivelist';
 import { injectable, inject, optional } from 'inversify';
 import { TextDocument } from 'vscode-languageserver-types';
 import { TextDocumentContentChangeEvent } from 'vscode-languageserver-protocol';
@@ -31,6 +30,7 @@ import { FileUri } from '@theia/core/lib/node/file-uri';
 import { FileStat, FileSystem, FileSystemClient, FileSystemError, FileMoveOptions, FileDeleteOptions, FileAccess } from '../common/filesystem';
 import * as iconv from 'iconv-lite';
 import { EncodingUtil } from './encoding-util';
+import { EnvVariablesServer } from '@theia/core/lib/common/env-variables';
 
 @injectable()
 export class FileSystemNodeOptions {
@@ -49,8 +49,14 @@ export class FileSystemNodeOptions {
 
 }
 
+/**
+ * @deprecated since 1.4.0 - in order to suppot VS Code FS API (https://github.com/eclipse-theia/theia/pull/7908), use `DiskFileSystemProvider` instead
+ */
 @injectable()
 export class FileSystemNode implements FileSystem {
+
+    @inject(EnvVariablesServer)
+    protected readonly environments: EnvVariablesServer;
 
     constructor(
         @inject(FileSystemNodeOptions) @optional() protected readonly options: FileSystemNodeOptions = FileSystemNodeOptions.DEFAULT
@@ -442,43 +448,11 @@ export class FileSystemNode implements FileSystem {
     }
 
     async getCurrentUserHome(): Promise<FileStat | undefined> {
-        return this.getFileStat(FileUri.create(os.homedir()).toString());
+        return this.getFileStat(await this.environments.getHomeDirUri());
     }
 
     getDrives(): Promise<string[]> {
-        return new Promise<string[]>((resolve, reject) => {
-            drivelist.list((error: Error, drives: { readonly mountpoints: { readonly path: string; }[] }[]) => {
-                if (error) {
-                    reject(error);
-                    return;
-                }
-
-                const uris = drives
-                    .map(drive => drive.mountpoints)
-                    .reduce((prev, curr) => prev.concat(curr), [])
-                    .map(mountpoint => mountpoint.path)
-                    .filter(this.filterMountpointPath.bind(this))
-                    .map(path => FileUri.create(path))
-                    .map(uri => uri.toString());
-
-                resolve(uris);
-            });
-        });
-    }
-
-    /**
-     * Filters hidden and system partitions.
-     */
-    protected filterMountpointPath(path: string): boolean {
-        // OS X: This is your sleep-image. When your Mac goes to sleep it writes the contents of its memory to the hard disk. (https://bit.ly/2R6cztl)
-        if (path === '/private/var/vm') {
-            return false;
-        }
-        // Ubuntu: This system partition is simply the boot partition created when the computers mother board runs UEFI rather than BIOS. (https://bit.ly/2N5duHr)
-        if (path === '/boot/efi') {
-            return false;
-        }
-        return true;
+        return this.environments.getDrives();
     }
 
     dispose(): void {
